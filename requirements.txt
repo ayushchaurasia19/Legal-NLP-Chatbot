@@ -1,0 +1,13 @@
+pymupdf
+pdfplumber
+llama-index
+llama-index-embeddings-huggingface
+llama-index-vector-stores-chroma
+chromadb
+groq
+gradio
+ragas
+datasets
+langchain-google-genai
+langchain-community
+sentence-transformers
