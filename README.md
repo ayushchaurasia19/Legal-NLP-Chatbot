@@ -23,7 +23,7 @@ A Privacy-Preserving Retrieval-Augmented Generation (RAG) Chatbot tailored for a
 
 ## 📋 Prerequisites
 
-- Python 3.9+ 
+- Python 3
 - A valid [Groq API Key](https://console.groq.com)
 - Optional: Google Gemini API Key (needed for running `evaluate.py` or fallback inference)
 
