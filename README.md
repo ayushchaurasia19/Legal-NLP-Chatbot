@@ -5,7 +5,7 @@ A Privacy-Preserving Retrieval-Augmented Generation (RAG) Chatbot tailored for a
 <img width="2764" height="1636" alt="image" src="https://github.com/user-attachments/assets/3e4920f6-c0a9-4d0f-8a5b-97ad8e3e7082" />
 
 
-## 🚀 Features
+## Features
 
 - **Local Document Embeddings**: Uses `BAAI/bge-small-en-v1.5` and persistent `ChromaDB` to chunk and embed legal PDFs completely locally without sending sensitive data to external servers.
 - **Robust PDF Parsing**: Extracts document text smoothly using `PyMuPDF` with an automatic fallback to `pdfplumber`.
@@ -15,7 +15,7 @@ A Privacy-Preserving Retrieval-Augmented Generation (RAG) Chatbot tailored for a
 - **Aesthetic Interface**: Simple and accessible web interface built with `Gradio`, outfitted with "Google Sans" typography and an intuitive chat view.
 - **Automated RAG Evaluation**: Contains an `evaluate.py` script powered by the `ragas` framework and Gemini API to assess performance metrics like faithfulness, context recall, and answer relevancy.
 
-## 🛠️ Technology Stack
+## Technology Stack
 
 - **UI Framework**: Gradio
 - **Orchestration**: LlamaIndex, LangChain
@@ -24,13 +24,13 @@ A Privacy-Preserving Retrieval-Augmented Generation (RAG) Chatbot tailored for a
 - **Generative AI API**: Groq API, Google Gemini API
 - **Evaluation framework**: Ragas
 
-## 📋 Prerequisites
+## Prerequisites
 
 - Python 3
 - A valid [Groq API Key](https://console.groq.com)
 - Optional: Google Gemini API Key (needed for running `evaluate.py` or fallback inference)
 
-## ⚙️ Installation & Setup
+## Installation & Setup
 
 1. **Clone the repository**
    ```bash
@@ -51,7 +51,7 @@ A Privacy-Preserving Retrieval-Augmented Generation (RAG) Chatbot tailored for a
    GEMINI_API_KEY=your_gemini_api_key_here  # Optional: For evaluation script
    ```
 
-## 🏃 Usage
+## Usage
 
 1. **Start the Application**
    ```bash
@@ -61,7 +61,7 @@ A Privacy-Preserving Retrieval-Augmented Generation (RAG) Chatbot tailored for a
 3. Upload your legal PDF documents using the left panel and click **"Index Documents"**. *(Note: Document embeddings are calculated on your local CPU. Large documents may take several minutes).*
 4. Chat with the virtual legal advisor! Ask hypothetical scenarios or definition-based questions, and the assistant will retrieve contextual documents and cite IPC sections when relevant.
 
-## 📊 Evaluation
+## Evaluation
 
 If you wish to benchmark the performance, faithfulness, and relevancy of the chatbot:
 1. Ensure your `GEMINI_API_KEY` is exported or exists in the `.env` file.
