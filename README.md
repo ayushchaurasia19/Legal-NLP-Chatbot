@@ -2,6 +2,9 @@
 
 A Privacy-Preserving Retrieval-Augmented Generation (RAG) Chatbot tailored for answering Indian Legal queries (e.g., questions involving the Indian Penal Code). The system leverages efficient Local Embeddings and a Vector Database for document indexing and retrieval, ensuring your documents remain on your device, merged with high-performance answer generation using the Groq API.
 
+<img width="2764" height="1636" alt="image" src="https://github.com/user-attachments/assets/3e4920f6-c0a9-4d0f-8a5b-97ad8e3e7082" />
+
+
 ## 🚀 Features
 
 - **Local Document Embeddings**: Uses `BAAI/bge-small-en-v1.5` and persistent `ChromaDB` to chunk and embed legal PDFs completely locally without sending sensitive data to external servers.
