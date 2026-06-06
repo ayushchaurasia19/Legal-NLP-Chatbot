@@ -11,3 +11,6 @@ datasets
 langchain-google-genai
 langchain-community
 sentence-transformers
+arize-phoenix
+llama-index-callbacks-arize-phoenix
+numpy

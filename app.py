@@ -6,10 +6,17 @@ load_dotenv(override=True)
 
 if not os.environ.get("GROQ_API_KEY") and os.environ.get("GEMINI_API_KEY"):
     os.environ["GROQ_API_KEY"] = os.environ.get("GEMINI_API_KEY")
+
+import phoenix as px
+import llama_index.core
+
+print("Launching Phoenix Observability...")
+px.launch_app()
+llama_index.core.set_global_handler("arize_phoenix")
+
 from rag_pipeline import LegalRAGPipeline
 
 pipeline = LegalRAGPipeline()
-
 def process_upload(files):
     if not files:
         return "No files uploaded."

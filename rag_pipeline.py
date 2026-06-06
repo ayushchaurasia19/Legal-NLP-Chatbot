@@ -5,7 +5,7 @@ import json
 import pymupdf
 import pdfplumber
 import chromadb
-
+import numpy as np
 from llama_index.core import Document, VectorStoreIndex, StorageContext, Settings
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.vector_stores.chroma import ChromaVectorStore
@@ -44,13 +44,47 @@ class LegalRAGPipeline:
 
     def _load_cache(self):
         if os.path.exists(self.cache_file):
-            with open(self.cache_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        return {}
+            try:
+                with open(self.cache_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if "queries" in data and "embeddings" in data and "answers" in data:
+                        return data
+                    else:
+                        print("Cache format outdated. Initializing new semantic cache.")
+                        return {"queries": [], "embeddings": [], "answers": []}
+            except Exception as e:
+                print(f"Error loading cache: {e}. Initializing new semantic cache.")
+                return {"queries": [], "embeddings": [], "answers": []}
+        return {"queries": [], "embeddings": [], "answers": []}
 
     def _save_cache(self):
         with open(self.cache_file, "w", encoding="utf-8") as f:
             json.dump(self.cache, f, indent=2)
+
+    def _semantic_cache_search(self, user_query: str) -> str:
+        if not self.cache.get("embeddings"):
+            return None
+            
+        try:
+            query_emb = np.array(Settings.embed_model.get_text_embedding(user_query))
+            cached_embs = np.array(self.cache["embeddings"])
+            
+            dot_products = np.dot(cached_embs, query_emb)
+            norms = np.linalg.norm(cached_embs, axis=1) * np.linalg.norm(query_emb)
+            # Add small epsilon to avoid division by zero
+            similarities = dot_products / (norms + 1e-9)
+            
+            best_idx = np.argmax(similarities)
+            print(f"Max semantic similarity: {similarities[best_idx]:.4f}")
+            if similarities[best_idx] > 0.80:
+                print(f"Semantic Cache Hit! (Similarity: {similarities[best_idx]:.4f})")
+                return self.cache["answers"][best_idx]
+            else:
+                print(f"Semantic Cache Miss. (Similarity: {similarities[best_idx]:.4f} <= 0.80)")
+        except Exception as e:
+            print(f"Semantic cache search error: {e}")
+            
+        return None
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
         # Step 1: PDF Parsing
@@ -97,11 +131,10 @@ class LegalRAGPipeline:
             print("Indexing complete.")
 
     def query(self, user_query: str) -> str:
-        # Step 6: Caching to protect Gemini rate limits
-        query_hash = hashlib.md5(user_query.strip().lower().encode()).hexdigest()
-        if query_hash in self.cache:
-            print("Cache Hit! Returning cached response directly.")
-            return self.cache[query_hash]
+        # Step 6: Semantic Caching
+        cached_answer = self._semantic_cache_search(user_query)
+        if cached_answer:
+            return cached_answer
         
         if self.index is None:
             return "Index is empty. Please upload and index a PDF first."
@@ -110,7 +143,7 @@ class LegalRAGPipeline:
         scenario_keywords = [" i ", "someone", "what if", "if a person", "he ", "she ", "they "]
         query_lower = f" {user_query.lower()} " 
         is_scenario = any(kw in query_lower for kw in scenario_keywords)
-        current_top_k = 8 if is_scenario else self.top_k
+        current_top_k = 6 if is_scenario else self.top_k
             
         # Step 5: Retrieval
         print(f"Retrieving context chunks locally (top_k={current_top_k})...")
@@ -123,7 +156,7 @@ class LegalRAGPipeline:
         context = "\n\n---\n\n".join([n.get_content() for n in nodes])
         
         # Step 6: Generation
-        print(context)
+        # print(context)
         print("Calling Groq API for answer generation...")
         
         api_key = os.environ.get("GROQ_API_KEY", "")
@@ -168,8 +201,16 @@ class LegalRAGPipeline:
                 )
                 answer = response.choices[0].message.content
                 
-                self.cache[query_hash] = answer
-                self._save_cache()
+                # Update semantic cache
+                try:
+                    if "Error communicating" not in answer:
+                        query_emb = Settings.embed_model.get_text_embedding(user_query)
+                        self.cache["queries"].append(user_query)
+                        self.cache["embeddings"].append(query_emb)
+                        self.cache["answers"].append(answer)
+                        self._save_cache()
+                except Exception as e:
+                    print(f"Failed to update cache: {e}")
                 
                 return answer
             except Exception as e:
