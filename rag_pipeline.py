@@ -7,7 +7,9 @@ import pdfplumber
 import chromadb
 import numpy as np
 from llama_index.core import Document, VectorStoreIndex, StorageContext, Settings
-from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.node_parser import SentenceSplitter, HierarchicalNodeParser, get_leaf_nodes
+from llama_index.storage.docstore.mongodb import MongoDocumentStore
+from llama_index.core.retrievers import AutoMergingRetriever
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from groq import Groq
@@ -21,17 +23,34 @@ Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
 Settings.llm = None 
 
 class LegalRAGPipeline:
-    def __init__(self, persist_dir="./chroma_db", cache_file="query_cache.json", top_k=7):
+    def __init__(self, persist_dir="./chroma_db", top_k=10):
         self.persist_dir = persist_dir
-        self.cache_file = cache_file
         self.top_k = top_k
-        self.cache = self._load_cache()
         
         # Step 4: Vector Store using ChromaDB Locally
         self.db = chromadb.PersistentClient(path=self.persist_dir)
         self.chroma_collection = self.db.get_or_create_collection("legal_docs")
         self.vector_store = ChromaVectorStore(chroma_collection=self.chroma_collection)
-        self.storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
+        
+        # Load or initialize the MongoDB document store for auto-merging parent retrieval
+        mongo_uri = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
+        print(f"Connecting to MongoDB document store at {mongo_uri}...")
+        self.docstore = MongoDocumentStore.from_uri(
+            uri=mongo_uri,
+            db_name="legal_rag_db",
+            namespace="docstore"
+        )
+            
+        self.storage_context = StorageContext.from_defaults(
+            vector_store=self.vector_store,
+            docstore=self.docstore
+        )
+        
+        # Connect to MongoDB cache collection and load existing cache
+        from pymongo import MongoClient
+        self.mongo_client = MongoClient(mongo_uri)
+        self.cache_col = self.mongo_client["legal_rag_db"]["query_cache"]
+        self.cache = self._load_cache()
         
         # Load existing index if available
         try:
@@ -43,23 +62,33 @@ class LegalRAGPipeline:
             self.index = None
 
     def _load_cache(self):
-        if os.path.exists(self.cache_file):
-            try:
-                with open(self.cache_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if "queries" in data and "embeddings" in data and "answers" in data:
-                        return data
-                    else:
-                        print("Cache format outdated. Initializing new semantic cache.")
-                        return {"queries": [], "embeddings": [], "answers": []}
-            except Exception as e:
-                print(f"Error loading cache: {e}. Initializing new semantic cache.")
-                return {"queries": [], "embeddings": [], "answers": []}
-        return {"queries": [], "embeddings": [], "answers": []}
+        print("Loading semantic cache from MongoDB...")
+        try:
+            records = list(self.cache_col.find({}, {"query": 1, "embedding": 1, "answer": 1}))
+            return {
+                "queries": [r["query"] for r in records],
+                "embeddings": [r["embedding"] for r in records],
+                "answers": [r["answer"] for r in records]
+            }
+        except Exception as e:
+            print(f"Error loading cache from MongoDB: {e}. Initializing empty in-memory cache.")
+            return {"queries": [], "embeddings": [], "answers": []}
 
-    def _save_cache(self):
-        with open(self.cache_file, "w", encoding="utf-8") as f:
-            json.dump(self.cache, f, indent=2)
+    def _add_to_cache(self, query: str, embedding: list, answer: str):
+        try:
+            # Update memory cache
+            self.cache["queries"].append(query)
+            self.cache["embeddings"].append(embedding)
+            self.cache["answers"].append(answer)
+            
+            # Save to MongoDB
+            self.cache_col.insert_one({
+                "query": query,
+                "embedding": embedding,
+                "answer": answer
+            })
+        except Exception as e:
+            print(f"Failed to write cache entry to MongoDB: {e}")
 
     def _semantic_cache_search(self, user_query: str) -> str:
         if not self.cache.get("embeddings"):
@@ -110,24 +139,39 @@ class LegalRAGPipeline:
         return text
 
     def index_documents(self, file_paths: list[str]):
-        """Index local PDFs into ChromaDB"""
+        """Index local PDFs into ChromaDB using HierarchicalNodeParser"""
         documents = []
         for path in file_paths:
             text = self.extract_text_from_pdf(path)
-            documents.append(Document(text=text, metadata={"source": path}))
+            if text.strip():
+                documents.append(Document(text=text, metadata={"source": path}))
         
         if documents:
-            print(f"Indexing {len(documents)} document(s) locally...")
+            print(f"Indexing {len(documents)} document(s) locally using HierarchicalNodeParser...")
             print("Note: Local CPU embedding of large documents may take several minutes. Please wait...")
+            
+            # Parse documents recursively into 512 and 128 token chunks
+            node_parser = HierarchicalNodeParser.from_defaults(
+                chunk_sizes=[512, 128]
+            )
+            nodes = node_parser.get_nodes_from_documents(documents)
+            leaf_nodes = get_leaf_nodes(nodes)
+            
+            # Store all nodes in the document store
+            self.storage_context.docstore.add_documents(nodes)
+            
+            # Index only the leaf nodes in the VectorStoreIndex
             if self.index is None:
-                self.index = VectorStoreIndex.from_documents(
-                    documents,
+                self.index = VectorStoreIndex(
+                    leaf_nodes,
                     storage_context=self.storage_context,
                     show_progress=True
                 )
             else:
-                for doc in documents:
-                    self.index.insert(doc)
+                self.index.insert_nodes(leaf_nodes)
+                # Keep docstore updated with the parent nodes
+                self.storage_context.docstore.add_documents(nodes)
+                
             print("Indexing complete.")
 
     def query(self, user_query: str) -> str:
@@ -139,15 +183,14 @@ class LegalRAGPipeline:
         if self.index is None:
             return "Index is empty. Please upload and index a PDF first."
             
-        # Dynamic top_k for scenario questions
-        scenario_keywords = [" i ", "someone", "what if", "if a person", "he ", "she ", "they "]
-        query_lower = f" {user_query.lower()} " 
-        is_scenario = any(kw in query_lower for kw in scenario_keywords)
-        current_top_k = 6 if is_scenario else self.top_k
-            
         # Step 5: Retrieval
-        print(f"Retrieving context chunks locally (top_k={current_top_k})...")
-        retriever = self.index.as_retriever(similarity_top_k=current_top_k)
+        print(f"Retrieving context chunks locally (top_k={self.top_k}) with AutoMergingRetriever...")
+        base_retriever = self.index.as_retriever(similarity_top_k=self.top_k)
+        retriever = AutoMergingRetriever(
+            vector_retriever=base_retriever,
+            storage_context=self.storage_context,
+            verbose=True
+        )
         nodes = retriever.retrieve(user_query)
         
         if not nodes:
@@ -205,10 +248,7 @@ class LegalRAGPipeline:
                 try:
                     if "Error communicating" not in answer:
                         query_emb = Settings.embed_model.get_text_embedding(user_query)
-                        self.cache["queries"].append(user_query)
-                        self.cache["embeddings"].append(query_emb)
-                        self.cache["answers"].append(answer)
-                        self._save_cache()
+                        self._add_to_cache(user_query, query_emb, answer)
                 except Exception as e:
                     print(f"Failed to update cache: {e}")
                 

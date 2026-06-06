@@ -4,31 +4,33 @@ A Privacy-Preserving Retrieval-Augmented Generation (RAG) Chatbot tailored for a
 
 <img width="2764" height="1636" alt="image" src="https://github.com/user-attachments/assets/3e4920f6-c0a9-4d0f-8a5b-97ad8e3e7082" />
 
-
 ## Features
 
-- **Local Document Embeddings**: Uses `BAAI/bge-small-en-v1.5` and persistent `ChromaDB` to chunk and embed legal PDFs completely locally without sending sensitive data to external servers.
+- **Hierarchical Chunking (Parent-Child)**: Partitions documents using `HierarchicalNodeParser` into 512-token parent nodes and 128-token leaf nodes. This maximizes vector search precision (searching on the smaller leaf nodes) while maintaining broad context for LLM generation (retrieving the larger parent nodes).
+- **Auto-Merging Retrieval**: Uses LlamaIndex's `AutoMergingRetriever` to dynamically reconstruct full parent contexts if 50% or more of their child nodes are matched during search.
+- **Local Document Embeddings**: Uses `BAAI/bge-small-en-v1.5` and persistent `ChromaDB` to index leaf nodes locally without sending sensitive legal data to external servers.
 - **Robust PDF Parsing**: Extracts document text smoothly using `PyMuPDF` with an automatic fallback to `pdfplumber`.
-- **Intelligent RAG Pipeline**: Built on top of `LlamaIndex` to perform context-aware conversational generation. The retriever dynamically adjusts the number of retrieved context chunks depending on user queries (e.g., broad legal concepts vs. specific hypothetical scenarios).
+- **Dockerized MongoDB Storage**: Stores parent-child node mappings inside a containerized MongoDB database via `MongoDocumentStore`, eliminating heavy memory constraints on startup.
 - **Fast Response Generation**: Integrates the Groq API (`llama-3.3-70b-versatile` by default) for lightning-fast and accurate legal advice generation. Includes exponential backoff handling to bypass rate limits smoothly.
-- **Smart Query Caching**: Hashes and caches repeat questions locally to provide near-instant answers and conserve API quotas.
+- **MongoDB Semantic Cache**: Caches repeat questions and their vector embeddings inside a MongoDB collection (`query_cache`) for BSON storage optimization, loading the cache into an in-memory dictionary on startup for instant cosine-similarity lookups.
 - **Aesthetic Interface**: Simple and accessible web interface built with `Gradio`, outfitted with "Google Sans" typography and an intuitive chat view.
-- **Automated RAG Evaluation**: Contains an `evaluate.py` script powered by the `ragas` framework and Gemini API to assess performance metrics like faithfulness, context recall, and answer relevancy.
+- **Automated RAG Evaluation**: Contains an `evaluate.py` script powered by the `ragas` framework and Groq API to assess performance metrics like faithfulness, context recall, and answer relevancy.
 
 ## Technology Stack
 
 - **UI Framework**: Gradio
 - **Orchestration**: LlamaIndex, LangChain
 - **Embeddings Model**: HuggingFace (`BAAI/bge-small-en-v1.5`)
-- **Vector Database**: ChromaDB
-- **Generative AI API**: Groq API, Google Gemini API
-- **Evaluation framework**: Ragas
+- **Vector Database**: ChromaDB (dense retrieval)
+- **Document Store & Cache**: MongoDB (running inside a Docker container)
+- **Generative AI API**: Groq API
+- **Evaluation Framework**: Ragas
 
 ## Prerequisites
 
 - Python 3
+- Docker (to run the MongoDB instance)
 - A valid [Groq API Key](https://console.groq.com)
-- Optional: Google Gemini API Key (needed for running `evaluate.py` or fallback inference)
 
 ## Installation & Setup
 
@@ -38,17 +40,29 @@ A Privacy-Preserving Retrieval-Augmented Generation (RAG) Chatbot tailored for a
    cd Legal-NLP-Chatbot
    ```
 
-2. **Install dependencies**
-   It is recommended to activate a virtual environment first, then run:
+2. **Start the MongoDB Docker Container**
+   Launch MongoDB in the background with persistent data volume and auto-restart policy:
    ```bash
-   pip install -r requirements.txt
+   docker run -d \
+     --name mongodb_local \
+     --restart unless-stopped \
+     -p 27017:27017 \
+     -v mongodb_data:/data/db \
+     mongo:latest
    ```
 
-3. **Configure Environment Variables**
-   Create a `.env` file in the root directory and add your API keys. A quick example:
+3. **Install Dependencies**
+   Install required Python libraries:
+   ```bash
+   pip install -r requirements.txt
+   pip install llama-index-storage-docstore-mongodb pymongo
+   ```
+
+4. **Configure Environment Variables**
+   Create a `.env` file in the root directory and configure the environment:
    ```env
    GROQ_API_KEY=your_groq_api_key_here
-   GEMINI_API_KEY=your_gemini_api_key_here  # Optional: For evaluation script
+   MONGO_URI=mongodb://localhost:27017
    ```
 
 ## Usage
@@ -64,7 +78,7 @@ A Privacy-Preserving Retrieval-Augmented Generation (RAG) Chatbot tailored for a
 ## Evaluation
 
 If you wish to benchmark the performance, faithfulness, and relevancy of the chatbot:
-1. Ensure your `GEMINI_API_KEY` is exported or exists in the `.env` file.
+1. Ensure your `GROQ_API_KEY` is exported or exists in the `.env` file.
 2. Run the evaluation script:
    ```bash
    python evaluate.py

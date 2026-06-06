@@ -51,20 +51,22 @@ def run_evaluation():
     
     dataset = Dataset.from_dict(data)
     
-    # Needs LLM config for evaluation. Let's use ChatGoogleGenerativeAI from langchain framework 
-    # since RAGAS integrates with it.
+    # Needs LLM config for evaluation. Let's use ChatOpenAI pointing to the Groq endpoint.
     try:
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        from langchain_google_genai import GoogleGenerativeAIEmbeddings
-        eval_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
+        from langchain_openai import ChatOpenAI
+        eval_llm = ChatOpenAI(
+            base_url="https://api.groq.com/openai/v1",
+            api_key=os.environ.get("GROQ_API_KEY"),
+            model="llama-3.3-70b-versatile"
+        )
         
         # Note: RAGAS needs an embedding model for context_recall and relevancy
         # We can pass HuggingFace for embeddings
         from langchain_community.embeddings import HuggingFaceEmbeddings
         eval_embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
     except ImportError:
-        print("Please install missing dependencies to run RAGAS with Gemini:")
-        print("pip install langchain-google-genai langchain-community")
+        print("Please install missing dependencies to run RAGAS:")
+        print("pip install langchain-openai langchain-community")
         return
 
     print("Running RAGAS evaluation...")
@@ -75,7 +77,7 @@ def run_evaluation():
     result = evaluate(
         dataset=dataset,
         metrics=metrics,
-        llm=eval_llm, # Evaluator uses Gemini API
+        llm=eval_llm, # Evaluator uses Groq API
         embeddings=eval_embeddings, # Evaluator uses local embeddings
         raise_exceptions=False
     )
@@ -84,7 +86,7 @@ def run_evaluation():
     print(result)
 
 if __name__ == "__main__":
-    if "GEMINI_API_KEY" not in os.environ:
-        print("Please set GEMINI_API_KEY environment variable. E.g. set GEMINI_API_KEY=your_key")
+    if "GROQ_API_KEY" not in os.environ:
+        print("Please set GROQ_API_KEY environment variable. E.g. set GROQ_API_KEY=your_key")
     else:
         run_evaluation()
