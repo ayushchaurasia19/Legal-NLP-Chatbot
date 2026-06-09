@@ -23,14 +23,14 @@ A Privacy-Preserving Retrieval-Augmented Generation (RAG) Chatbot tailored for a
 ## Technology Stack
 
 - **UI Framework**: Gradio
-- **Orchestration**: LlamaIndex, LangChain
+- **Orchestration**: LlamaIndex
 - **Embeddings Model**: HuggingFace (`BAAI/bge-small-en-v1.5`)
 - **Reranker Model**: HuggingFace (`BAAI/bge-reranker-base`)
 - **Vector Database**: ChromaDB (dense retrieval)
 - **Document Store & Cache**: MongoDB (running inside a Docker container)
 - **Generative AI API**: Groq API
 - **Observability**: Arize Phoenix
-- **Evaluation Framework**: Ragas
+- **Evaluation Framework**: Ragas (utilizing LangChain wrappers)
 
 ## Project Structure
 
