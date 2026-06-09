@@ -1,8 +1,10 @@
 import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from datasets import Dataset
 from ragas import evaluate
 from ragas.metrics import faithfulness, answer_relevancy, context_recall
-from rag_pipeline import LegalRAGPipeline
+from src.rag_pipeline import LegalRAGPipeline
 
 def run_evaluation():
     # Example dataset structure needed by RAGAS:

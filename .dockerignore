@@ -1,0 +1,16 @@
+# Exclude environment files
+.env
+
+# Exclude local database directories
+chroma_db/
+mongodb_data/
+
+# Exclude python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Exclude git directories
+.git
+.gitignore

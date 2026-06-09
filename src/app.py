@@ -10,7 +10,7 @@ load_dotenv(override=True)
 
 # Launch Phoenix Observability
 print("Launching Phoenix Observability...")
-px.launch_app()
+px.launch_app(host="0.0.0.0", port=6006)
 llama_index.core.set_global_handler("arize_phoenix")
 
 # Initialize the RAG Pipeline
@@ -72,4 +72,4 @@ with gr.Blocks(title="Legal Chatbot", theme=custom_theme) as demo:
     index_btn.click(fn=process_upload, inputs=file_uploader, outputs=index_status)
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(server_name="0.0.0.0", server_port=7860)

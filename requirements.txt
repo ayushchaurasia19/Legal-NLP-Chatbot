@@ -8,7 +8,6 @@ groq
 gradio
 ragas
 datasets
-langchain-google-genai
 langchain-community
 sentence-transformers
 arize-phoenix
@@ -16,3 +15,6 @@ llama-index-callbacks-arize-phoenix
 numpy
 llama-index-storage-docstore-mongodb
 pymongo
+rank-bm25
+llama-index-retrievers-bm25
+llama-index-postprocessor-sbert-rerank

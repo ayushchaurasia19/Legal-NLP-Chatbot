@@ -1,6 +1,8 @@
 import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from dotenv import load_dotenv
-from rag_pipeline import LegalRAGPipeline
+from src.rag_pipeline import LegalRAGPipeline
 
 # Suppress warning logs
 os.environ["TOKENIZERS_PARALLELISM"] = "false"

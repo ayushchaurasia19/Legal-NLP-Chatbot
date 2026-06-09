@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  # The MongoDB service
+  mongodb:
+    image: mongo:6.0
+    container_name: legal-chatbot-mongodb
+    ports:
+      - "27017:27017" # Map host port 27017 to container port 27017
+    volumes:
+      # Persist MongoDB database files using a named Docker volume
+      - mongodb_data:/data/db
+    restart: unless-stopped
+
+  # The Python app service
+  app:
+    build: . # Build the image using the local Dockerfile
+    container_name: legal-chatbot-app
+    ports:
+      - "7860:7860" # Gradio UI
+      - "6006:6006" # Arize Phoenix Observability dashboard
+    environment:
+      # Connect to the MongoDB container using its service name "mongodb" as the hostname.
+      # Docker Compose automatically sets up a DNS network bridge between services in the same file.
+      - MONGO_URI=mongodb://mongodb:27017
+      # Pass through the GROQ_API_KEY from the host machine's environment (or .env file)
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    volumes:
+      # Mount ChromaDB local storage directory for persistence
+      - ./data/chroma_db:/app/data/chroma_db
+      # Mount input document files directory
+      - ./data/Legal Document PDFs:/app/data/Legal Document PDFs
+      # Mount a named volume to cache Hugging Face models so they aren't redownloaded on rebuilds
+      - hf_cache:/root/.cache/huggingface
+    depends_on:
+      # Ensure MongoDB is started before the application runs
+      - mongodb
+    restart: unless-stopped
+
+# Named Docker volumes that outlive container lifecycles
+volumes:
+  mongodb_data:
+  hf_cache:

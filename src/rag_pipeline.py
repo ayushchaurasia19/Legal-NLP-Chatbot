@@ -1,17 +1,16 @@
 import os
 import time
-import hashlib
-import json
 import pymupdf
 import pdfplumber
 import chromadb
 import numpy as np
 from llama_index.core import Document, VectorStoreIndex, StorageContext, Settings
-from llama_index.core.node_parser import SentenceSplitter, HierarchicalNodeParser, get_leaf_nodes
+from llama_index.core.node_parser import HierarchicalNodeParser, get_leaf_nodes
 from llama_index.storage.docstore.mongodb import MongoDocumentStore
 from llama_index.core.retrievers import AutoMergingRetriever
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.core.base.embeddings.base import similarity
 from groq import Groq
 
 # Step 2: Global Configuration for Chunking
@@ -23,7 +22,7 @@ Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
 Settings.llm = None 
 
 class LegalRAGPipeline:
-    def __init__(self, persist_dir="./chroma_db", top_k=10):
+    def __init__(self, persist_dir="data/chroma_db", top_k=10):
         self.persist_dir = persist_dir
         self.top_k = top_k
         
@@ -58,8 +57,33 @@ class LegalRAGPipeline:
                 vector_store=self.vector_store,
                 embed_model=Settings.embed_model
             )
+            self._update_bm25_retriever()
         except Exception:
             self.index = None
+            self.bm25_retriever = None
+
+    def _update_bm25_retriever(self):
+        print("Initializing/Updating BM25 Retriever from stored leaf nodes...")
+        try:
+            from llama_index.core.node_parser import get_leaf_nodes
+            from llama_index.retrievers.bm25 import BM25Retriever
+            
+            all_nodes = list(self.storage_context.docstore.docs.values())
+            leaf_nodes = get_leaf_nodes(all_nodes)
+            
+            if leaf_nodes:
+                self.bm25_retriever = BM25Retriever.from_defaults(
+                    nodes=leaf_nodes,
+                    similarity_top_k=self.top_k
+                )
+                print(f"BM25 retriever successfully built with {len(leaf_nodes)} leaf nodes.")
+            else:
+                self.bm25_retriever = None
+                print("No leaf nodes found in docstore. BM25 retriever set to None.")
+        except Exception as e:
+            print(f"Failed to initialize BM25 retriever: {e}")
+            self.bm25_retriever = None
+
 
     def _load_cache(self):
         print("Loading semantic cache from MongoDB...")
@@ -95,13 +119,11 @@ class LegalRAGPipeline:
             return None
             
         try:
-            query_emb = np.array(Settings.embed_model.get_text_embedding(user_query))
-            cached_embs = np.array(self.cache["embeddings"])
+            query_emb = Settings.embed_model.get_text_embedding(user_query)
+            cached_embs = self.cache["embeddings"]
             
-            dot_products = np.dot(cached_embs, query_emb)
-            norms = np.linalg.norm(cached_embs, axis=1) * np.linalg.norm(query_emb)
-            # Add small epsilon to avoid division by zero
-            similarities = dot_products / (norms + 1e-9)
+            # Use LlamaIndex's built-in similarity function (calculates cosine similarity)
+            similarities = [similarity(emb, query_emb) for emb in cached_embs]
             
             best_idx = np.argmax(similarities)
             print(f"Max semantic similarity: {similarities[best_idx]:.4f}")
@@ -172,6 +194,7 @@ class LegalRAGPipeline:
                 # Keep docstore updated with the parent nodes
                 self.storage_context.docstore.add_documents(nodes)
                 
+            self._update_bm25_retriever()
             print("Indexing complete.")
 
     def query(self, user_query: str) -> str:
@@ -184,22 +207,62 @@ class LegalRAGPipeline:
             return "Index is empty. Please upload and index a PDF first."
             
         # Step 5: Retrieval
-        print(f"Retrieving context chunks locally (top_k={self.top_k}) with AutoMergingRetriever...")
-        base_retriever = self.index.as_retriever(similarity_top_k=self.top_k)
+        print(f"Retrieving context chunks locally (top_k={self.top_k}) with Hybrid Search...")
+        
+        # 1. Base Dense Retriever (Chroma)
+        # Fetch similarity_top_k = self.top_k * 2 (candidate pool size 20)
+        base_dense_retriever = self.index.as_retriever(similarity_top_k=self.top_k * 2)
+        
+        # 2. Base Sparse Retriever (BM25)
+        # If BM25 retriever is initialized, we use QueryFusionRetriever to merge them.
+        if self.bm25_retriever is not None:
+            self.bm25_retriever.similarity_top_k = self.top_k * 2
+            
+            from llama_index.core.retrievers import QueryFusionRetriever
+            hybrid_retriever = QueryFusionRetriever(
+                retrievers=[base_dense_retriever, self.bm25_retriever],
+                similarity_top_k=self.top_k * 2,
+                num_queries=1,
+                mode="reciprocal_rerank",
+                use_async=False,
+                verbose=True,
+                llm=None
+            )
+        else:
+            hybrid_retriever = base_dense_retriever
+            
+        # 3. Auto-Merging Parent-Child Retriever
+        # We wrap the hybrid retriever in the AutoMergingRetriever to get parent nodes
         retriever = AutoMergingRetriever(
-            vector_retriever=base_retriever,
+            vector_retriever=hybrid_retriever,
             storage_context=self.storage_context,
             verbose=True
         )
-        nodes = retriever.retrieve(user_query)
         
-        if not nodes:
+        candidate_nodes = retriever.retrieve(user_query)
+        
+        if not candidate_nodes:
             return "No relevant legal context found."
+            
+        # 4. Cross-Encoder Re-ranking
+        # Re-rank the merged parent nodes using BAAI/bge-reranker-base
+        from llama_index.core.postprocessor import SentenceTransformerRerank
+        
+        print("Re-ranking retrieved chunks with Cross-Encoder...")
+        try:
+            # We select top 5 final nodes for the context window
+            reranker = SentenceTransformerRerank(
+                model="BAAI/bge-reranker-base",
+                top_n=5
+            )
+            nodes = reranker.postprocess_nodes(candidate_nodes, query_str=user_query)
+        except Exception as e:
+            print(f"Reranking failed: {e}. Falling back to default candidates.")
+            nodes = candidate_nodes[:5]
             
         context = "\n\n---\n\n".join([n.get_content() for n in nodes])
         
         # Step 6: Generation
-        # print(context)
         print("Calling Groq API for answer generation...")
         
         api_key = os.environ.get("GROQ_API_KEY", "")
